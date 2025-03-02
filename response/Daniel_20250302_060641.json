@@ -1,0 +1,7 @@
+{
+  "checksum" : "12345",
+  "workspace" : "",
+  "message" : "hello world!",
+  "env" : "GCP",
+  "user" : "Daniel"
+}
