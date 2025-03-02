@@ -6,8 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api")
@@ -36,28 +35,18 @@ public class PosterController {
             @RequestBody RequestData requestData,
             @RequestParam List<String> users
     ) {
-        List<CompletableFuture<ResponseEntity<String>>> futures = users.stream()
-                .map(user -> posterService.sendPostRequestAsync(
-                        requestData.getUrl(),
-                        requestData.getUsername(),
-                        requestData.getPassword(),
-                        user,
-                        requestData.getWorkspace(),
-                        requestData.getEnv()))
-                .collect(Collectors.toList());
-
-        List<String> responses = futures.stream()
-                .map(CompletableFuture::join)
-                .map(ResponseEntity::getBody)
-                .collect(Collectors.toList());
-
-        return ResponseEntity.ok(responses);
+        return ResponseEntity.ok(posterService.processMultipleUsers(requestData, users));
     }
 
-    // New housekeeping endpoint
     @PostMapping("/housekeep")
     public ResponseEntity<String> housekeep() {
         int deletedFiles = posterService.cleanUpOldResponses();
         return ResponseEntity.ok("Deleted " + deletedFiles + " old response files.");
+    }
+
+    @PostMapping("/update")
+    public ResponseEntity<Set<String>> checkForUpdates() {
+        Set<String> usersForUpdate = posterService.checkForUpdate();
+        return ResponseEntity.ok(usersForUpdate);
     }
 }

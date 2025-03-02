@@ -1,5 +1,6 @@
 package com.example.poster.service;
 
+import com.example.poster.dto.RequestData;
 import org.springframework.http.*;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -12,12 +13,13 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 @Service
 public class PosterService {
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private static final String RESPONSE_FOLDER = "response"; // Folder to store JSON responses
+    private static final String RESPONSE_FOLDER = "response";
 
     public ResponseEntity<String> sendPostRequest(
             String url, String username, String password, String user, String workspace, String env) {
@@ -46,6 +48,23 @@ public class PosterService {
         return CompletableFuture.completedFuture(response);
     }
 
+    public List<String> processMultipleUsers(RequestData requestData, List<String> users) {
+        List<CompletableFuture<ResponseEntity<String>>> futures = users.stream()
+                .map(user -> sendPostRequestAsync(
+                        requestData.getUrl(),
+                        requestData.getUsername(),
+                        requestData.getPassword(),
+                        user,
+                        requestData.getWorkspace(),
+                        requestData.getEnv()))
+                .collect(Collectors.toList());
+
+        return futures.stream()
+                .map(CompletableFuture::join)
+                .map(ResponseEntity::getBody)
+                .collect(Collectors.toList());
+    }
+
     private HttpHeaders createHeaders(String username, String password) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -69,7 +88,7 @@ public class PosterService {
             JsonNode jsonResponse = objectMapper.readTree(responseBody);
             String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
             File folder = new File(RESPONSE_FOLDER);
-            if (!folder.exists()) folder.mkdirs(); // Ensure directory exists
+            if (!folder.exists()) folder.mkdirs();
 
             String filename = RESPONSE_FOLDER + "/" + user + "_" + timestamp + ".json";
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(new File(filename), jsonResponse);
@@ -78,7 +97,6 @@ public class PosterService {
         }
     }
 
-    // Housekeeping method to delete old JSON files
     public int cleanUpOldResponses() {
         File folder = new File(RESPONSE_FOLDER);
         if (!folder.exists() || !folder.isDirectory()) return 0;
@@ -86,11 +104,10 @@ public class PosterService {
         File[] files = folder.listFiles((dir, name) -> name.endsWith(".json"));
         if (files == null || files.length == 0) return 0;
 
-        // Group files by user
         Map<String, List<File>> userFilesMap = new HashMap<>();
         for (File file : files) {
             String filename = file.getName();
-            String user = filename.split("_")[0]; // Extract username
+            String user = filename.split("_")[0];
             userFilesMap.putIfAbsent(user, new ArrayList<>());
             userFilesMap.get(user).add(file);
         }
@@ -98,10 +115,8 @@ public class PosterService {
         int deletedFilesCount = 0;
 
         for (List<File> userFiles : userFilesMap.values()) {
-            // Sort files by timestamp (descending order)
             userFiles.sort((f1, f2) -> f2.getName().compareTo(f1.getName()));
 
-            // Keep only the 2 most recent files, delete the rest
             for (int i = 2; i < userFiles.size(); i++) {
                 if (userFiles.get(i).delete()) {
                     deletedFilesCount++;
@@ -110,5 +125,47 @@ public class PosterService {
         }
 
         return deletedFilesCount;
+    }
+
+    public Set<String> checkForUpdate() {
+        File folder = new File(RESPONSE_FOLDER);
+        if (!folder.exists() || !folder.isDirectory()) return Collections.emptySet();
+
+        File[] files = folder.listFiles((dir, name) -> name.endsWith(".json"));
+        if (files == null || files.length == 0) return Collections.emptySet();
+
+        Map<String, List<File>> userFilesMap = new HashMap<>();
+        for (File file : files) {
+            String filename = file.getName();
+            String user = filename.split("_")[0];
+            userFilesMap.putIfAbsent(user, new ArrayList<>());
+            userFilesMap.get(user).add(file);
+        }
+
+        Set<String> usersForUpdate = new HashSet<>();
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        for (Map.Entry<String, List<File>> entry : userFilesMap.entrySet()) {
+            List<File> userFiles = entry.getValue();
+            userFiles.sort((f1, f2) -> f2.getName().compareTo(f1.getName()));
+
+            if (userFiles.size() < 2) continue;
+
+            try {
+                JsonNode recentJson = objectMapper.readTree(userFiles.get(0));
+                JsonNode previousJson = objectMapper.readTree(userFiles.get(1));
+
+                String recentChecksum = recentJson.path("checksum").asText();
+                String previousChecksum = previousJson.path("checksum").asText();
+
+                if (!recentChecksum.equals(previousChecksum)) {
+                    usersForUpdate.add(entry.getKey());
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        return usersForUpdate;
     }
 }

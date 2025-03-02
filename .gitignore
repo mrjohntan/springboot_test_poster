@@ -33,4 +33,4 @@ build/
 .vscode/
 response
 *.zip
-*.csv
+/user.csv
